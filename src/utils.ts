@@ -1,5 +1,12 @@
-import { store, crypto } from '@graphprotocol/graph-ts'
+import { store, crypto, ethereum, BigDecimal } from '@graphprotocol/graph-ts'
 import { BigInt, Address, ByteArray } from '@graphprotocol/graph-ts'
+import {
+  LidoDayData,
+  LidoHourData,
+  Totals,
+  UserDayData,
+  UserHourData
+} from '../generated/schema'
 
 import {
   ORACLE_RUNS_BUFFER,
@@ -7,6 +14,7 @@ import {
   getFirstOracleReport,
   ZERO,
   ONE,
+  ZEROBD
 } from './constants'
 
 export function guessOracleRunsTotal(currentblockTime: BigInt): BigInt {
@@ -112,4 +120,147 @@ function toUpper(str: string): string {
     }
   }
   return result
+}
+
+export function updateUserDayDataFromEvent(event: ethereum.Event): void {
+  updateUserDayDataFromAddress(
+    event.transaction.from,
+    event.block.timestamp.toU64()
+  )
+  if (event.transaction.to)
+    updateUserDayDataFromAddress(
+      event.transaction.to!,
+      event.block.timestamp.toU64()
+    )
+}
+
+export function updateUserDayDataFromAddress(
+  addr: Address,
+  timestamp: u64
+): void {
+  // round to day precision
+  let dayID = timestamp / 86400
+  let id = addr
+    .toHexString()
+    .concat('-')
+    .concat(dayID.toString())
+
+  // if user has not been indexed before,
+  // then increment the activeUsers counter to
+  // only account for unique addresses
+  let userDayData = UserDayData.load(id)
+  if (!userDayData) {
+    userDayData = new UserDayData(id)
+
+    let dayData = LidoDayData.load(dayID.toString())
+    if (dayData) {
+      dayData.activeUsers = dayData.activeUsers.plus(ONE)
+      dayData.save()
+    }
+  }
+
+  userDayData.save()
+}
+
+export function updateDayData(event: ethereum.Event): void {
+  let timestamp = event.block.timestamp.toI32()
+  let dayID = timestamp / 86400
+  let dayStartTimestamp = dayID * 86400
+  let dayData = LidoDayData.load(dayID.toString())
+  if (!dayData) {
+    dayData = new LidoDayData(dayID.toString())
+    dayData.periodStartUnix = dayStartTimestamp
+    dayData.activeUsers = ZERO
+    dayData.tvlETH = ZEROBD
+    dayData.tvlUSD = ZEROBD
+    dayData.txCount = ZERO
+    dayData.activeUsers = ZERO
+  }
+
+  let totals = Totals.load('')
+  if (totals) {
+    dayData.tvlETH = totals.tvlETH
+    dayData.tvlUSD = totals.tvlUSD
+  }
+
+  dayData.txCount = dayData.txCount.plus(ONE)
+
+  dayData.save()
+}
+
+export function updateUserHourDataFromEvent(event: ethereum.Event): void {
+  updateUserHourDataFromAddress(
+    event.transaction.from,
+    event.block.timestamp.toU64()
+  )
+  if (event.transaction.to)
+    updateUserHourDataFromAddress(
+      event.transaction.to!,
+      event.block.timestamp.toU64()
+    )
+}
+
+export function updateUserHourDataFromAddress(
+  addr: Address,
+  timestamp: u64
+): void {
+  // round to hour precision
+  let hourIndex = timestamp / 3600
+  let tokenHourID = hourIndex.toString()
+
+  let id = addr
+    .toHexString()
+    .concat('-')
+    .concat(tokenHourID)
+
+  // if user has not been indexed before,
+  // then increment the activeUsers counter to
+  // only account for unique addresses
+  let userHourData = UserHourData.load(id)
+  if (!userHourData) {
+    userHourData = new UserHourData(id)
+
+    let hourData = LidoHourData.load(tokenHourID)
+    if (hourData) {
+      hourData.activeUsers = hourData.activeUsers.plus(ONE)
+      hourData.save()
+    }
+  }
+
+  userHourData.save()
+}
+
+export function updateHourData(event: ethereum.Event): void {
+  let timestamp = event.block.timestamp.toI32()
+  let hourIndex = timestamp / 3600
+  let hourStartUnix = hourIndex * 3600
+  let tokenHourID = hourIndex.toString()
+  let hourData = LidoHourData.load(tokenHourID)
+
+  if (!hourData) {
+    hourData = new LidoHourData(tokenHourID)
+    hourData.periodStartUnix = hourStartUnix
+    hourData.activeUsers = ZERO
+    hourData.tvlETH = ZEROBD
+    hourData.tvlUSD = ZEROBD
+    hourData.txCount = ZERO
+    hourData.activeUsers = ZERO
+  }
+
+  let totals = Totals.load('')
+  if (totals) {
+    hourData.tvlETH = totals.tvlETH
+    hourData.tvlUSD = totals.tvlUSD
+  }
+
+  hourData.txCount = hourData.txCount.plus(ONE)
+
+  hourData.save()
+}
+
+export function updatePeriodicData(event: ethereum.Event): void {
+  updateDayData(event)
+  updateHourData(event)
+  updateUserDayDataFromEvent(event)
+  updateUserHourDataFromEvent(event)
 }

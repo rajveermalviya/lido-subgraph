@@ -138,6 +138,8 @@ type Totals @entity {
 
   totalPooledEther: BigInt!
   totalShares: BigInt!
+  tvlETH: BigDecimal!
+  tvlUSD: BigDecimal!
 }
 
 type Stats @entity {
@@ -629,4 +631,32 @@ type PauseIntentValidityPeriodBlocksChange @entity(immutable: true) {
   block: BigInt!
   blockTime: BigInt!
   transactionHash: Bytes!
+}
+
+type UserDayData @entity {
+  id: ID!
+}
+
+type LidoDayData @entity {
+  id: ID!
+
+  periodStartUnix: Int!
+  tvlETH: BigDecimal!
+  tvlUSD: BigDecimal!
+  txCount: BigInt!
+  activeUsers: BigInt!
+}
+
+type UserHourData @entity {
+  id: ID!
+}
+
+type LidoHourData @entity {
+  id: ID!
+
+  periodStartUnix: Int!
+  tvlETH: BigDecimal!
+  tvlUSD: BigDecimal!
+  txCount: BigInt!
+  activeUsers: BigInt!
 }

@@ -11,7 +11,7 @@ import {
   ExpectedEpochIdUpdated,
   BeaconReportReceiverSet,
   AllowedBeaconBalanceRelativeDecreaseSet,
-  AllowedBeaconBalanceAnnualRelativeIncreaseSet,
+  AllowedBeaconBalanceAnnualRelativeIncreaseSet
 } from '../generated/LidoOracle/LidoOracle'
 import {
   OracleCompleted,
@@ -27,10 +27,17 @@ import {
   BeaconReportReceiver,
   Totals,
   NodeOperatorsShares,
-  CurrentFees,
+  CurrentFees
 } from '../generated/schema'
 
-import { CALCULATION_UNIT, DEPOSIT_AMOUNT, ZERO, ONE } from './constants'
+import {
+  CALCULATION_UNIT,
+  DEPOSIT_AMOUNT,
+  ZERO,
+  ONE,
+  ETH_TO_USD,
+  WEI_TO_ETH
+} from './constants'
 
 import { loadNosContract } from './contracts'
 
@@ -74,24 +81,24 @@ export function handleCompleted(event: Completed): void {
   /**
    Appeared validators can be negative if active keys are deleted, which can happen on Testnet.
    As we are comparing previous Oracle report, by the time of a new report validator removal can happen.
-   
+
    In such cases, we override appearedValidatorsDeposits to ZERO as:
    Our Subgraph 10 - 20 = -10 validatorsAmount math is 10 - 10 = 0 validatorsAmount in contract.
-   
+
    Context:
-   
+
    totalPooledEther = bufferedBalance (in the contract) + beaconBalance (validator balances) + transientBalance (sent to validators, but not yet there)
-   
+
    transientBalance is tricky, it's (depositedValidators - beaconValidators) * 32eth
-   
+
    DEPOSITED_VALIDATORS_POSITION is incremented on ETH deposit to deposit contract
    BEACON_VALIDATORS_POSITION is incremented on oracle reports
-   
+
    As we saw on testnet, manual active key removal will adjust totalPooledEther straight away as there will be a difference between validators deposited and beacon validators.
-   
+
    DEPOSITED_VALIDATORS_POSITION was left intact
    BEACON_VALIDATORS_POSITION was decreased
-   
+
    This would increase totalPooledEther until an oracle report is made.
   **/
 
@@ -118,6 +125,8 @@ export function handleCompleted(event: Completed): void {
   // See ADR #3 for details: https://research.lido.fi/t/rewards-distribution-after-the-merge-architecture-decision-record/1535
   if (newBeaconBalance.le(rewardBase)) {
     totals.totalPooledEther = totalPooledEtherAfter
+    totals.tvlETH = new BigDecimal(totals.totalPooledEther).times(WEI_TO_ETH)
+    totals.tvlUSD = totals.tvlETH.times(ETH_TO_USD)
     totals.save()
     return
   }
@@ -159,6 +168,8 @@ export function handleCompleted(event: Completed): void {
 
   totals.totalPooledEther = totalPooledEtherAfter
   totals.totalShares = totalSharesAfter
+  totals.tvlETH = new BigDecimal(totals.totalPooledEther).times(WEI_TO_ETH)
+  totals.tvlUSD = totals.tvlETH.times(ETH_TO_USD)
   totals.save()
 
   // Further shares calculations
@@ -346,13 +357,13 @@ export function handlePostTotalShares(event: PostTotalShares): void {
   entity.totalShares = event.params.totalShares
 
   /**
-  
+
   aprRaw -> aprBeforeFees -> apr
-  
+
   aprRaw - APR straight from validator balances without adjustments
   aprBeforeFees - APR compensated for time difference between oracle reports
   apr - Time-compensated APR with fees subtracted
-  
+
   **/
 
   // APR without subtracting fees and without any compensations

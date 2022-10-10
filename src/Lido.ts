@@ -1,4 +1,4 @@
-import { BigInt } from '@graphprotocol/graph-ts'
+import { BigDecimal, BigInt } from '@graphprotocol/graph-ts'
 import { store, ethereum } from '@graphprotocol/graph-ts'
 import {
   Stopped,
@@ -21,7 +21,7 @@ import {
   StakingPaused,
   TransferShares,
   SharesBurnt,
-  BeaconValidatorsUpdated,
+  BeaconValidatorsUpdated
 } from '../generated/Lido/Lido'
 import {
   LidoStopped,
@@ -50,7 +50,7 @@ import {
   StakingResume,
   StakingPause,
   SharesTransfer,
-  SharesBurn,
+  SharesBurn
 } from '../generated/schema'
 
 import { loadLidoContract, loadNosContract } from './contracts'
@@ -61,9 +61,13 @@ import {
   ONE,
   CALCULATION_UNIT,
   ZERO_ADDRESS,
+  ZEROBD,
+  ETH_TO_USD,
+  WEI_TO_ETH
 } from './constants'
 
 import { wcKeyCrops } from './wcKeyCrops'
+import { updatePeriodicData } from './utils'
 
 export function handleStopped(event: Stopped): void {
   let entity = new LidoStopped(
@@ -74,6 +78,8 @@ export function handleStopped(event: Stopped): void {
   entity.blockTime = event.block.timestamp
 
   entity.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleResumed(event: Resumed): void {
@@ -85,6 +91,8 @@ export function handleResumed(event: Resumed): void {
   entity.blockTime = event.block.timestamp
 
   entity.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleTransfer(event: Transfer): void {
@@ -129,7 +137,7 @@ export function handleTransfer(event: Transfer): void {
 
   /**
   Handling fees, in order:
-  
+
   1. Insurance Fund Transfer
   2. Node Operator Reward Transfers
   3. Treasury Fund Transfer with remaining dust or just rounding dust
@@ -294,6 +302,8 @@ export function handleTransfer(event: Transfer): void {
 
     stats.save()
   }
+
+  updatePeriodicData(event)
 }
 
 export function handleApproval(event: Approval): void {
@@ -306,6 +316,8 @@ export function handleApproval(event: Approval): void {
   entity.value = event.params.value
 
   entity.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleFeeSet(event: FeeSet): void {
@@ -321,6 +333,8 @@ export function handleFeeSet(event: FeeSet): void {
   if (!current) current = new CurrentFees('')
   current.feeBasisPoints = BigInt.fromI32(event.params.feeBasisPoints)
   current.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleFeeDistributionSet(event: FeeDistributionSet): void {
@@ -346,6 +360,8 @@ export function handleFeeDistributionSet(event: FeeDistributionSet): void {
     event.params.operatorsFeeBasisPoints
   )
   current.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleWithdrawalCredentialsSet(
@@ -377,6 +393,8 @@ export function handleWithdrawalCredentialsSet(
       store.remove('NodeOperatorSigningKey', key)
     }
   }
+
+  updatePeriodicData(event)
 }
 
 export function handleSubmit(event: Submitted): void {
@@ -397,6 +415,8 @@ export function handleSubmit(event: Submitted): void {
     totals = new Totals('')
     totals.totalPooledEther = ZERO
     totals.totalShares = ZERO
+    totals.tvlETH = ZEROBD
+    totals.tvlUSD = ZEROBD
   }
 
   entity.sender = event.params.sender
@@ -446,6 +466,8 @@ export function handleSubmit(event: Submitted): void {
   // Increasing Totals
   totals.totalPooledEther = totals.totalPooledEther.plus(event.params.amount)
   totals.totalShares = totals.totalShares.plus(shares)
+  totals.tvlETH = new BigDecimal(totals.totalPooledEther).times(WEI_TO_ETH)
+  totals.tvlUSD = totals.tvlETH.times(ETH_TO_USD)
 
   entity.totalPooledEtherAfter = totals.totalPooledEther
   entity.totalSharesAfter = totals.totalShares
@@ -458,6 +480,8 @@ export function handleSubmit(event: Submitted): void {
   entity.save()
   sharesEntity.save()
   totals.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleUnbuffered(event: Unbuffered): void {
@@ -468,6 +492,8 @@ export function handleUnbuffered(event: Unbuffered): void {
   entity.amount = event.params.amount
 
   entity.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleWithdrawal(event: Withdrawal): void {
@@ -493,8 +519,12 @@ export function handleWithdrawal(event: Withdrawal): void {
     event.params.tokenAmount
   )
   totals.totalShares = totals.totalShares.minus(shares)
+  totals.tvlETH = new BigDecimal(totals.totalPooledEther).times(WEI_TO_ETH)
+  totals.tvlUSD = totals.tvlETH.times(ETH_TO_USD)
 
   totals.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleBeaconValidatorsUpdated(
@@ -506,7 +536,11 @@ export function handleBeaconValidatorsUpdated(
 
   let totals = Totals.load('')!
   totals.totalPooledEther = realPooledEther
+  totals.tvlETH = new BigDecimal(totals.totalPooledEther).times(WEI_TO_ETH)
+  totals.tvlUSD = totals.tvlETH.times(ETH_TO_USD)
   totals.save()
+
+  updatePeriodicData(_event)
 }
 
 /**
@@ -514,7 +548,7 @@ We need to recalculate total rewards when there are MEV rewards.
 This event is emitted only when there was something taken from MEV vault.
 Most logic is the same as in Oracle's handleCompleted.
 
-TODO: We should not skip TotalReward creation when there are no basic rewards but there are MEV rewards. 
+TODO: We should not skip TotalReward creation when there are no basic rewards but there are MEV rewards.
 
 Usual order of events:
 BeaconReported -> Completed -> ELRewardsReceived
@@ -536,12 +570,9 @@ export function handleELRewardsReceived(event: ELRewardsReceived): void {
     totalRewardsEntity.operatorsFee = ZERO
 
     totalRewardsEntity.feeBasis = currentFees.feeBasisPoints!
-    totalRewardsEntity.treasuryFeeBasisPoints =
-      currentFees.treasuryFeeBasisPoints!
-    totalRewardsEntity.insuranceFeeBasisPoints =
-      currentFees.insuranceFeeBasisPoints!
-    totalRewardsEntity.operatorsFeeBasisPoints =
-      currentFees.operatorsFeeBasisPoints!
+    totalRewardsEntity.treasuryFeeBasisPoints = currentFees.treasuryFeeBasisPoints!
+    totalRewardsEntity.insuranceFeeBasisPoints = currentFees.insuranceFeeBasisPoints!
+    totalRewardsEntity.operatorsFeeBasisPoints = currentFees.operatorsFeeBasisPoints!
 
     let totals = Totals.load('')!
     totalRewardsEntity.totalPooledEtherBefore = totals.totalPooledEther
@@ -562,8 +593,9 @@ export function handleELRewardsReceived(event: ELRewardsReceived): void {
   totalRewardsEntity.totalRewardsWithFees = newTotalRewards
   totalRewardsEntity.totalRewards = newTotalRewards
 
-  let totalPooledEtherAfter =
-    totalRewardsEntity.totalPooledEtherBefore.plus(newTotalRewards)
+  let totalPooledEtherAfter = totalRewardsEntity.totalPooledEtherBefore.plus(
+    newTotalRewards
+  )
 
   // Overall shares for all rewards cut
   let shares2mint = newTotalRewards
@@ -580,6 +612,8 @@ export function handleELRewardsReceived(event: ELRewardsReceived): void {
   let totals = Totals.load('') as Totals
   totals.totalPooledEther = totalPooledEtherAfter
   totals.totalShares = totalSharesAfter
+  totals.tvlETH = new BigDecimal(totals.totalPooledEther).times(WEI_TO_ETH)
+  totals.tvlUSD = totals.tvlETH.times(ETH_TO_USD)
   totals.save()
 
   let sharesToInsuranceFund = shares2mint
@@ -646,6 +680,8 @@ export function handleELRewardsReceived(event: ELRewardsReceived): void {
   totalRewardsEntity.dustSharesToTreasury = dustSharesToTreasury
 
   totalRewardsEntity.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleELRewardsVaultSet(event: ELRewardsVaultSetEvent): void {
@@ -668,6 +704,8 @@ export function handleELRewardsWithdrawalLimitSet(
   entity.limitPoints = event.params.limitPoints
 
   entity.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleProtocolContactsSet(
@@ -682,6 +720,8 @@ export function handleProtocolContactsSet(
   entity.treasury = event.params.treasury
 
   entity.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleStakingLimitRemoved(event: StakingLimitRemoved): void {
@@ -689,6 +729,8 @@ export function handleStakingLimitRemoved(event: StakingLimitRemoved): void {
     event.transaction.hash.toHex() + '-' + event.logIndex.toString()
   )
   entity.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleStakingLimitSet(event: StakingLimitSetEvent): void {
@@ -700,6 +742,8 @@ export function handleStakingLimitSet(event: StakingLimitSetEvent): void {
   entity.stakeLimitIncreasePerBlock = event.params.stakeLimitIncreasePerBlock
 
   entity.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleStakingResumed(event: StakingResumed): void {
@@ -707,6 +751,8 @@ export function handleStakingResumed(event: StakingResumed): void {
     event.transaction.hash.toHex() + '-' + event.logIndex.toString()
   )
   entity.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleStakingPaused(event: StakingPaused): void {
@@ -714,6 +760,8 @@ export function handleStakingPaused(event: StakingPaused): void {
     event.transaction.hash.toHex() + '-' + event.logIndex.toString()
   )
   entity.save()
+
+  updatePeriodicData(event)
 }
 
 /**
@@ -729,6 +777,8 @@ export function handleTransferShares(event: TransferShares): void {
   entity.to = event.params.to
 
   entity.save()
+
+  updatePeriodicData(event)
 }
 
 export function handleSharesBurnt(event: SharesBurnt): void {
@@ -753,6 +803,8 @@ export function handleSharesBurnt(event: SharesBurnt): void {
   let totals = Totals.load('')!
   totals.totalShares = totals.totalShares.minus(sharesAmount)
   totals.save()
+
+  updatePeriodicData(event)
 }
 
 /**
@@ -782,6 +834,8 @@ export function handleTestnetBlock(block: ethereum.Block): void {
 
     let totals = Totals.load('')!
     totals.totalPooledEther = realPooledEther
+    totals.tvlETH = new BigDecimal(totals.totalPooledEther).times(WEI_TO_ETH)
+    totals.tvlUSD = totals.tvlETH.times(ETH_TO_USD)
     totals.save()
   }
 }

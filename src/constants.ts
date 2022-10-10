@@ -1,4 +1,4 @@
-import { BigInt, Address, TypedMap } from '@graphprotocol/graph-ts'
+import { BigInt, Address, TypedMap, BigDecimal } from '@graphprotocol/graph-ts'
 import { dataSource } from '@graphprotocol/graph-ts'
 
 const network = dataSource.network()
@@ -8,8 +8,13 @@ const isMainnet = network == 'mainnet'
 Units
 **/
 
+export const WEI_TO_ETH = BigDecimal.fromString('0.000000000000000001')
+export const ETH_TO_USD = BigDecimal.fromString('1313.89')
+
 export const ZERO = BigInt.fromI32(0)
 export const ONE = BigInt.fromI32(1)
+
+export const ZEROBD = BigDecimal.zero()
 
 export const CALCULATION_UNIT = BigInt.fromI32(10000)
 
